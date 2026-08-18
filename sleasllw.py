@@ -3,20 +3,18 @@
 
 """
 Network Scanner & SNI Analyzer - Web Version
+للعمل على Render
 """
 
-from flask import Flask, render_template_string, request, jsonify, send_file
+from flask import Flask, render_template_string, request, jsonify
 import socket
 import ssl
 import dns.resolver
 import requests
 import json
-import csv
-import io
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import re
-import threading
+import os
 
 app = Flask(__name__)
 
@@ -48,16 +46,12 @@ HTML_TEMPLATE = '''
         .btn-primary:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(0, 212, 255, 0.3); }
         .btn-secondary { background: #2a2a4a; color: #fff; }
         .btn-secondary:hover { background: #3a3a5a; }
-        .btn-danger { background: #ff4444; color: #fff; }
-        .btn-danger:hover { background: #cc0000; }
         .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         @media (max-width: 768px) { .results-grid { grid-template-columns: 1fr; } }
         .stat-box { background: #0f0f1a; padding: 15px; border-radius: 10px; border: 1px solid #2a2a4a; text-align: center; }
         .stat-box .number { font-size: 2em; color: #00d4ff; }
         .stat-box .label { color: #888; font-size: 0.9em; }
         .port-open { color: #00ff88; }
-        .port-closed { color: #ff4444; }
-        .port-filtered { color: #ffaa00; }
         .sni-item { background: #0f0f1a; padding: 8px 15px; border-radius: 8px; margin: 5px 0; border-left: 3px solid #7b2ffc; }
         .sni-item .type { color: #888; font-size: 0.8em; }
         .subdomain-item { background: #0f0f1a; padding: 5px 15px; border-radius: 5px; margin: 3px 0; font-size: 0.9em; color: #aaa; }
@@ -70,11 +64,6 @@ HTML_TEMPLATE = '''
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .json-view { background: #0f0f1a; padding: 15px; border-radius: 10px; overflow-x: auto; white-space: pre-wrap; font-family: monospace; font-size: 0.85em; }
-        .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.8em; }
-        .badge-success { background: #00ff8822; color: #00ff88; border: 1px solid #00ff8833; }
-        .badge-danger { background: #ff444422; color: #ff4444; border: 1px solid #ff444433; }
-        .badge-warning { background: #ffaa0022; color: #ffaa00; border: 1px solid #ffaa0033; }
-        .badge-info { background: #00d4ff22; color: #00d4ff; border: 1px solid #00d4ff33; }
         .footer { text-align: center; padding: 20px; color: #555; font-size: 0.8em; border-top: 1px solid #2a2a4a; margin-top: 30px; }
         .quick-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
         .quick-btn { padding: 5px 15px; background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 20px; color: #aaa; cursor: pointer; font-size: 0.85em; transition: all 0.2s; }
@@ -128,7 +117,7 @@ HTML_TEMPLATE = '''
         </div>
 
         <div class="footer">
-            🔒 للأغراض التعليمية والبحثية فقط | تم التطوير بواسطة 🤖
+            🔒 للأغراض التعليمية والبحثية فقط
         </div>
     </div>
 
@@ -192,13 +181,10 @@ HTML_TEMPLATE = '''
 
             // Ports
             const ports = document.getElementById('tab-ports');
-            if (data.open_ports && Object.keys(data.open_ports).length > 0) {
+            if (data.open_ports && data.open_ports.length > 0) {
                 let html = '<div class="card"><h2>🔓 المنافذ المفتوحة</h2>';
-                for (const [ip, ports_list] of Object.entries(data.open_ports)) {
-                    html += `<p><strong>IP: ${ip}</strong></p>`;
-                    for (const port of ports_list) {
-                        html += `<span class="port-open">✅ ${port.port} (${port.service})</span> `;
-                    }
+                for (const p of data.open_ports) {
+                    html += `<span class="port-open">✅ ${p.port} (${p.service})</span> `;
                 }
                 html += '</div>';
                 ports.innerHTML = html;
@@ -211,8 +197,11 @@ HTML_TEMPLATE = '''
             if (data.subdomains && data.subdomains.length > 0) {
                 let html = '<div class="card"><h2>🌐 النطاقات الفرعية المكتشفة</h2>';
                 html += `<p style="color: #888;">تم العثور على ${data.subdomains.length} نطاق فرعي</p>`;
-                for (const sub of data.subdomains) {
+                for (const sub of data.subdomains.slice(0, 30)) {
                     html += `<div class="subdomain-item">${sub}</div>`;
+                }
+                if (data.subdomains.length > 30) {
+                    html += `<div class="subdomain-item">... و ${data.subdomains.length - 30} نطاق آخر</div>`;
                 }
                 html += '</div>';
                 subdomains.innerHTML = html;
@@ -220,13 +209,12 @@ HTML_TEMPLATE = '''
                 subdomains.innerHTML = '<div class="card"><p style="color: #888;">لا توجد نطاقات فرعية مكتشفة</p></div>';
             }
 
-            // SNI Recommendations
+            // SNI
             const sni = document.getElementById('tab-sni');
             if (data.sni_recommendations && data.sni_recommendations.length > 0) {
                 let html = '<div class="card"><h2>💡 توصيات SNI</h2>';
                 for (const item of data.sni_recommendations) {
-                    const type = item.type || 'نطاق';
-                    html += `<div class="sni-item"><strong>${item.domain}</strong> <span class="type">[${type}]</span></div>`;
+                    html += `<div class="sni-item"><strong>${item.domain}</strong> <span class="type">[${item.type}]</span></div>`;
                 }
                 html += '</div>';
                 sni.innerHTML = html;
@@ -254,7 +242,6 @@ HTML_TEMPLATE = '''
                     <h2>📄 البيانات الخام (JSON)</h2>
                     <div class="json-view">${JSON.stringify(data, null, 2)}</div>
                     <button class="btn btn-secondary" style="margin-top: 10px;" onclick="copyJSON()">📋 نسخ</button>
-                    <button class="btn btn-secondary" style="margin-top: 10px; margin-right: 10px;" onclick="downloadJSON()">⬇️ تحميل</button>
                 </div>
             `;
 
@@ -279,18 +266,6 @@ HTML_TEMPLATE = '''
             if (scanResults) {
                 navigator.clipboard.writeText(JSON.stringify(scanResults, null, 2))
                     .then(() => alert('✅ تم نسخ JSON'));
-            }
-        }
-
-        function downloadJSON() {
-            if (scanResults) {
-                const blob = new Blob([JSON.stringify(scanResults, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `scan_${scanResults.target}_${new Date().toISOString().slice(0,10)}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
             }
         }
     </script>
@@ -398,17 +373,14 @@ def generate_sni_recommendations(domain, subdomains, ssl_info):
     recommendations = []
     seen = set()
 
-    # النطاق الأساسي
     recommendations.append({'domain': domain, 'type': 'النطاق الأساسي'})
     seen.add(domain)
 
-    # النطاقات الفرعية
     for sub in subdomains:
         if sub not in seen:
             recommendations.append({'domain': sub, 'type': 'نطاق فرعي'})
             seen.add(sub)
 
-    # النطاقات من الشهادة
     if ssl_info and 'sans' in ssl_info:
         for san in ssl_info['sans']:
             if san not in seen and san.endswith(domain):
@@ -433,31 +405,22 @@ def scan():
         return jsonify({'error': 'الرجاء إدخال نطاق أو IP'})
 
     try:
-        # حل النطاق
         ip = resolve_domain(target)
         if not ip:
-            # محاولة كـ IP مباشر
             try:
                 socket.inet_aton(target)
                 ip = target
             except:
                 return jsonify({'error': 'فشل في حل النطاق أو IP غير صالح'})
 
-        # معلومات IP
         ip_info = get_ip_info(ip)
-
-        # النطاقات الفرعية
         subdomains = find_subdomains(target)
-
-        # فحص المنافذ
         open_ports = scan_ports(ip)
 
-        # SSL
         ssl_info = None
         if any(p['port'] == 443 for p in open_ports):
             ssl_info = analyze_ssl(ip)
 
-        # توصيات SNI
         sni_recommendations = generate_sni_recommendations(target, subdomains, ssl_info)
 
         result = {
@@ -485,10 +448,6 @@ def scan():
 # ============================================
 
 if __name__ == '__main__':
-    print("""
-    ╔═══════════════════════════════════════════╗
-    ║   🌐 Network Scanner & SNI Analyzer      ║
-    ║   تشغيل السيرفر على: http://0.0.0.0:5000 ║
-    ╚═══════════════════════════════════════════╝
-    """)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 تشغيل السيرفر على المنفذ: {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
