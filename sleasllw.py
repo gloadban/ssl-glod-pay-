@@ -1,266 +1,494 @@
-import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Network Scanner & SNI Analyzer - Web Version
+"""
+
+from flask import Flask, render_template_string, request, jsonify, send_file
 import socket
-import platform
-import time
+import ssl
+import dns.resolver
+import requests
+import json
+import csv
+import io
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
+import threading
+
+app = Flask(__name__)
 
 # ============================================
-# 📄 صفحة تعليمية تعرض معلومات الجهاز
+# القوالب HTML
 # ============================================
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="ar">
+
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📊 معلومات الجهاز - تعليمي</title>
+    <title>Network Scanner & SNI Analyzer</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-            min-height: 100vh;
-            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            direction: rtl;
-        }
-
-        .container {
-            max-width: 550px;
-            width: 100%;
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 30px;
-            padding: 35px 30px;
-            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
-            animation: fadeIn 0.8s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(30px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 25px;
-        }
-
-        .header .icon {
-            font-size: 50px;
-            display: block;
-            margin-bottom: 10px;
-        }
-
-        .header h1 {
-            color: #fff;
-            font-size: 24px;
-            font-weight: 800;
-        }
-
-        .header .sub {
-            color: rgba(255,255,255,0.5);
-            font-size: 13px;
-            margin-top: 5px;
-        }
-
-        .info-box {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            padding: 18px;
-            margin-bottom: 12px;
-            border-right: 3px solid #667eea;
-            transition: 0.3s;
-        }
-
-        .info-box:hover {
-            background: rgba(255, 255, 255, 0.08);
-        }
-
-        .info-box .label {
-            color: rgba(255,255,255,0.4);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-weight: 600;
-        }
-
-        .info-box .value {
-            color: #fff;
-            font-size: 16px;
-            font-weight: 600;
-            margin-top: 4px;
-            word-break: break-all;
-            font-family: 'Courier New', monospace;
-            direction: ltr;
-            text-align: left;
-        }
-
-        .info-box .value.ar {
-            direction: rtl;
-            text-align: right;
-        }
-
-        .badge {
-            display: inline-block;
-            background: rgba(102, 126, 234, 0.2);
-            color: #667eea;
-            padding: 4px 12px;
-            border-radius: 50px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-top: 5px;
-            border: 1px solid rgba(102, 126, 234, 0.2);
-        }
-
-        .divider {
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-            margin: 20px 0;
-        }
-
-        .footer {
-            text-align: center;
-            margin-top: 20px;
-        }
-
-        .footer p {
-            color: rgba(255,255,255,0.3);
-            font-size: 12px;
-            line-height: 1.8;
-        }
-
-        .footer .highlight {
-            color: #ff6b6b;
-        }
-
-        .btn-refresh {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: #fff;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 12px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            width: 100%;
-            transition: all 0.3s;
-            margin-top: 15px;
-        }
-
-        .btn-refresh:hover {
-            transform: scale(1.02);
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f0f1a; color: #e0e0e0; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { text-align: center; padding: 30px 0; border-bottom: 2px solid #2a2a4a; margin-bottom: 30px; }
+        .header h1 { font-size: 2.5em; background: linear-gradient(135deg, #00d4ff, #7b2ffc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header p { color: #888; margin-top: 10px; }
+        .card { background: #1a1a2e; border-radius: 15px; padding: 25px; margin-bottom: 25px; border: 1px solid #2a2a4a; }
+        .card h2 { color: #00d4ff; margin-bottom: 15px; font-size: 1.3em; }
+        .input-group { display: flex; gap: 10px; flex-wrap: wrap; }
+        .input-group input { flex: 1; padding: 12px 20px; border-radius: 10px; border: 1px solid #2a2a4a; background: #0f0f1a; color: #fff; font-size: 16px; min-width: 200px; }
+        .input-group input:focus { border-color: #00d4ff; outline: none; }
+        .btn { padding: 12px 30px; border: none; border-radius: 10px; font-size: 16px; cursor: pointer; transition: all 0.3s; font-weight: bold; }
+        .btn-primary { background: linear-gradient(135deg, #00d4ff, #7b2ffc); color: #fff; }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(0, 212, 255, 0.3); }
+        .btn-secondary { background: #2a2a4a; color: #fff; }
+        .btn-secondary:hover { background: #3a3a5a; }
+        .btn-danger { background: #ff4444; color: #fff; }
+        .btn-danger:hover { background: #cc0000; }
+        .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .results-grid { grid-template-columns: 1fr; } }
+        .stat-box { background: #0f0f1a; padding: 15px; border-radius: 10px; border: 1px solid #2a2a4a; text-align: center; }
+        .stat-box .number { font-size: 2em; color: #00d4ff; }
+        .stat-box .label { color: #888; font-size: 0.9em; }
+        .port-open { color: #00ff88; }
+        .port-closed { color: #ff4444; }
+        .port-filtered { color: #ffaa00; }
+        .sni-item { background: #0f0f1a; padding: 8px 15px; border-radius: 8px; margin: 5px 0; border-left: 3px solid #7b2ffc; }
+        .sni-item .type { color: #888; font-size: 0.8em; }
+        .subdomain-item { background: #0f0f1a; padding: 5px 15px; border-radius: 5px; margin: 3px 0; font-size: 0.9em; color: #aaa; }
+        .loading { display: none; text-align: center; padding: 40px; }
+        .loading .spinner { width: 50px; height: 50px; border: 4px solid #2a2a4a; border-top: 4px solid #00d4ff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .tabs { display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }
+        .tab { padding: 10px 20px; background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 8px 8px 0 0; cursor: pointer; }
+        .tab.active { background: #1a1a2e; border-bottom: 2px solid #00d4ff; color: #00d4ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .json-view { background: #0f0f1a; padding: 15px; border-radius: 10px; overflow-x: auto; white-space: pre-wrap; font-family: monospace; font-size: 0.85em; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.8em; }
+        .badge-success { background: #00ff8822; color: #00ff88; border: 1px solid #00ff8833; }
+        .badge-danger { background: #ff444422; color: #ff4444; border: 1px solid #ff444433; }
+        .badge-warning { background: #ffaa0022; color: #ffaa00; border: 1px solid #ffaa0033; }
+        .badge-info { background: #00d4ff22; color: #00d4ff; border: 1px solid #00d4ff33; }
+        .footer { text-align: center; padding: 20px; color: #555; font-size: 0.8em; border-top: 1px solid #2a2a4a; margin-top: 30px; }
+        .quick-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+        .quick-btn { padding: 5px 15px; background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 20px; color: #aaa; cursor: pointer; font-size: 0.85em; transition: all 0.2s; }
+        .quick-btn:hover { border-color: #00d4ff; color: #00d4ff; }
     </style>
 </head>
 <body>
-
     <div class="container">
         <div class="header">
-            <span class="icon">🖥️</span>
-            <h1>معلومات جهازك</h1>
-            <div class="sub">للأغراض التعليمية فقط - أنت ترى معلوماتك أنت</div>
+            <h1>🌐 Network Scanner & SNI Analyzer</h1>
+            <p>مسح المنافذ المفتوحة، اكتشاف النطاقات الفرعية، وتحليل SNI لشبكات الاتصالات</p>
         </div>
 
-        <div id="infoContainer">
-            <!-- يتم تعبئتها بواسطة JavaScript -->
+        <div class="card">
+            <h2>🎯 إدخال الهدف</h2>
+            <div class="input-group">
+                <input type="text" id="targetInput" placeholder="أدخل نطاق (مثل stc.com.sa) أو IP" value="stc.com.sa">
+                <button class="btn btn-primary" onclick="startScan()">🚀 فحص</button>
+                <button class="btn btn-secondary" onclick="clearResults()">🗑️ مسح</button>
+            </div>
+            <div class="quick-buttons">
+                <span class="quick-btn" onclick="quickScan('stc.com.sa')">stc.com.sa</span>
+                <span class="quick-btn" onclick="quickScan('mobily.com.sa')">mobily.com.sa</span>
+                <span class="quick-btn" onclick="quickScan('zain.com.sa')">zain.com.sa</span>
+                <span class="quick-btn" onclick="quickScan('botgateway.stc.com.sa')">botgateway.stc.com.sa</span>
+                <span class="quick-btn" onclick="quickScan('cloud.stc.com.sa')">cloud.stc.com.sa</span>
+            </div>
         </div>
 
-        <div class="divider"></div>
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p style="margin-top: 20px; color: #888;">جاري الفحص... قد يستغرق بعض الوقت</p>
+        </div>
 
-        <button class="btn-refresh" onclick="loadInfo()">🔄 تحديث المعلومات</button>
+        <div id="results" style="display: none;">
+            <div class="tabs" id="tabs">
+                <div class="tab active" onclick="switchTab('summary')">📊 ملخص</div>
+                <div class="tab" onclick="switchTab('ports')">🔓 المنافذ</div>
+                <div class="tab" onclick="switchTab('subdomains')">🌐 النطاقات الفرعية</div>
+                <div class="tab" onclick="switchTab('sni')">💡 توصيات SNI</div>
+                <div class="tab" onclick="switchTab('ssl')">🔐 SSL</div>
+                <div class="tab" onclick="switchTab('json')">📄 JSON</div>
+            </div>
+
+            <div id="tab-summary" class="tab-content active"></div>
+            <div id="tab-ports" class="tab-content"></div>
+            <div id="tab-subdomains" class="tab-content"></div>
+            <div id="tab-sni" class="tab-content"></div>
+            <div id="tab-ssl" class="tab-content"></div>
+            <div id="tab-json" class="tab-content"></div>
+        </div>
 
         <div class="footer">
-            <p>
-                <span class="highlight">⚠️</span> هذه المعلومات خاصة بجهازك فقط<br>
-                لأغراض <span class="highlight">تعليمية</span> لفهم بيانات الجهاز
-            </p>
+            🔒 للأغراض التعليمية والبحثية فقط | تم التطوير بواسطة 🤖
         </div>
     </div>
 
     <script>
-        function loadInfo() {
-            const container = document.getElementById('infoContainer');
-            
-            const info = {
-                '🌐 عنوان IP': 'تحتاج إلى سيرفر لجلب IP',
-                '🖥️ نظام التشغيل': navigator.platform || 'غير معروف',
-                '🌍 المتصفح': navigator.userAgent || 'غير معروف',
-                '📱 نوع الجهاز': /Mobile/.test(navigator.userAgent) ? 'جوال' : 'كمبيوتر',
-                '🔤 اللغة': navigator.language || 'غير معروف',
-                '📐 دقة الشاشة': window.screen.width + 'x' + window.screen.height,
-                '🕐 الوقت الحالي': new Date().toLocaleString('ar-SA'),
-                '🔗 البروتوكول': window.location.protocol,
-            };
+        let scanResults = null;
 
-            let html = '';
-            for (const [label, value] of Object.entries(info)) {
-                html += `
-                    <div class="info-box">
-                        <div class="label">${label}</div>
-                        <div class="value">${value}</div>
-                    </div>
-                `;
-            }
-
-            container.innerHTML = html;
+        function quickScan(target) {
+            document.getElementById('targetInput').value = target;
+            startScan();
         }
 
-        // تحميل عند فتح الصفحة
-        loadInfo();
-
-        // منع بعض الاختصارات
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'F12' || 
-                (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J')) ||
-                (e.ctrlKey && e.key === 'U')) {
-                e.preventDefault();
-                return false;
+        function startScan() {
+            const target = document.getElementById('targetInput').value.trim();
+            if (!target) {
+                alert('الرجاء إدخال نطاق أو IP');
+                return;
             }
-        });
+
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+
+            fetch('/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target: target })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('loading').style.display = 'none';
+                if (data.error) {
+                    alert('❌ ' + data.error);
+                    return;
+                }
+                scanResults = data;
+                displayResults(data);
+                document.getElementById('results').style.display = 'block';
+            })
+            .catch(error => {
+                document.getElementById('loading').style.display = 'none';
+                alert('❌ حدث خطأ: ' + error);
+            });
+        }
+
+        function displayResults(data) {
+            // Summary
+            const summary = document.getElementById('tab-summary');
+            summary.innerHTML = `
+                <div class="results-grid">
+                    <div class="stat-box"><div class="number">${data.main_ip || 'N/A'}</div><div class="label">IP الرئيسي</div></div>
+                    <div class="stat-box"><div class="number">${data.subdomains_count || 0}</div><div class="label">النطاقات الفرعية</div></div>
+                    <div class="stat-box"><div class="number">${data.open_ports_count || 0}</div><div class="label">المنافذ المفتوحة</div></div>
+                    <div class="stat-box"><div class="number">${data.sni_count || 0}</div><div class="label">توصيات SNI</div></div>
+                </div>
+                <div style="margin-top: 20px; padding: 15px; background: #0f0f1a; border-radius: 10px;">
+                    <p><strong>🎯 النطاق:</strong> ${data.target}</p>
+                    <p><strong>📌 الوقت:</strong> ${data.scan_time || 'N/A'}</p>
+                    <p><strong>🏢 المزود:</strong> ${data.org || 'غير معروف'}</p>
+                    <p><strong>📍 الموقع:</strong> ${data.location || 'غير معروف'}</p>
+                </div>
+            `;
+
+            // Ports
+            const ports = document.getElementById('tab-ports');
+            if (data.open_ports && Object.keys(data.open_ports).length > 0) {
+                let html = '<div class="card"><h2>🔓 المنافذ المفتوحة</h2>';
+                for (const [ip, ports_list] of Object.entries(data.open_ports)) {
+                    html += `<p><strong>IP: ${ip}</strong></p>`;
+                    for (const port of ports_list) {
+                        html += `<span class="port-open">✅ ${port.port} (${port.service})</span> `;
+                    }
+                }
+                html += '</div>';
+                ports.innerHTML = html;
+            } else {
+                ports.innerHTML = '<div class="card"><p style="color: #888;">لا توجد منافذ مفتوحة مكتشفة</p></div>';
+            }
+
+            // Subdomains
+            const subdomains = document.getElementById('tab-subdomains');
+            if (data.subdomains && data.subdomains.length > 0) {
+                let html = '<div class="card"><h2>🌐 النطاقات الفرعية المكتشفة</h2>';
+                html += `<p style="color: #888;">تم العثور على ${data.subdomains.length} نطاق فرعي</p>`;
+                for (const sub of data.subdomains) {
+                    html += `<div class="subdomain-item">${sub}</div>`;
+                }
+                html += '</div>';
+                subdomains.innerHTML = html;
+            } else {
+                subdomains.innerHTML = '<div class="card"><p style="color: #888;">لا توجد نطاقات فرعية مكتشفة</p></div>';
+            }
+
+            // SNI Recommendations
+            const sni = document.getElementById('tab-sni');
+            if (data.sni_recommendations && data.sni_recommendations.length > 0) {
+                let html = '<div class="card"><h2>💡 توصيات SNI</h2>';
+                for (const item of data.sni_recommendations) {
+                    const type = item.type || 'نطاق';
+                    html += `<div class="sni-item"><strong>${item.domain}</strong> <span class="type">[${type}]</span></div>`;
+                }
+                html += '</div>';
+                sni.innerHTML = html;
+            } else {
+                sni.innerHTML = '<div class="card"><p style="color: #888;">لا توجد توصيات SNI</p></div>';
+            }
+
+            // SSL
+            const ssl = document.getElementById('tab-ssl');
+            if (data.ssl_info) {
+                let html = '<div class="card"><h2>🔐 معلومات شهادة SSL</h2>';
+                html += `<p><strong>الجهة:</strong> ${data.ssl_info.subject || 'N/A'}</p>`;
+                html += `<p><strong>المصدر:</strong> ${data.ssl_info.issuer || 'N/A'}</p>`;
+                html += `<p><strong>صالحة حتى:</strong> ${data.ssl_info.notAfter || 'N/A'}</p>`;
+                html += `<p><strong>النطاقات البديلة:</strong> ${data.ssl_info.san_count || 0}</p>`;
+                html += '</div>';
+                ssl.innerHTML = html;
+            } else {
+                ssl.innerHTML = '<div class="card"><p style="color: #888;">لا توجد معلومات SSL متاحة</p></div>';
+            }
+
+            // JSON
+            document.getElementById('tab-json').innerHTML = `
+                <div class="card">
+                    <h2>📄 البيانات الخام (JSON)</h2>
+                    <div class="json-view">${JSON.stringify(data, null, 2)}</div>
+                    <button class="btn btn-secondary" style="margin-top: 10px;" onclick="copyJSON()">📋 نسخ</button>
+                    <button class="btn btn-secondary" style="margin-top: 10px; margin-right: 10px;" onclick="downloadJSON()">⬇️ تحميل</button>
+                </div>
+            `;
+
+            switchTab('summary');
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+
+            document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+        }
+
+        function clearResults() {
+            document.getElementById('results').style.display = 'none';
+            scanResults = null;
+            document.getElementById('targetInput').value = '';
+        }
+
+        function copyJSON() {
+            if (scanResults) {
+                navigator.clipboard.writeText(JSON.stringify(scanResults, null, 2))
+                    .then(() => alert('✅ تم نسخ JSON'));
+            }
+        }
+
+        function downloadJSON() {
+            if (scanResults) {
+                const blob = new Blob([JSON.stringify(scanResults, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `scan_${scanResults.target}_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        }
     </script>
-
 </body>
-</html>"""
+</html>
+'''
 
 # ============================================
-# 🚀 خادم معدل لـ Render
+# دوال المسح
 # ============================================
-class MyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html; charset=utf-8')
-        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-        self.end_headers()
-        self.wfile.write(HTML_PAGE.encode('utf-8'))
-    
-    def log_message(self, format, *args):
-        pass
 
-def start():
-    port = int(os.environ.get('PORT', 8085))
-    server = HTTPServer(('0.0.0.0', port), MyHandler)
-    
-    print('\n' + '='*60)
-    print('📊 موقع عرض معلومات الجهاز - تعليمي')
-    print('🔒 يعرض فقط معلومات جهاز المستخدم نفسه')
-    print('🛑 Press Ctrl+C to stop')
-    print('='*60 + '\n')
-    
+def resolve_domain(domain):
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print('\n🛑 Server stopped')
-        server.shutdown()
+        answers = dns.resolver.resolve(domain, 'A')
+        for rdata in answers:
+            return str(rdata)
+    except:
+        return None
+
+def get_ip_info(ip):
+    try:
+        response = requests.get(f'https://ipinfo.io/{ip}/json', timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                'org': data.get('org', 'غير معروف'),
+                'city': data.get('city', 'غير معروف'),
+                'region': data.get('region', 'غير معروف'),
+                'country': data.get('country', 'غير معروف')
+            }
+    except:
+        pass
+    return {'org': 'غير معروف', 'city': 'غير معروف', 'region': 'غير معروف', 'country': 'غير معروف'}
+
+def find_subdomains(domain):
+    subdomains = set()
+    try:
+        url = f"https://crt.sh/?q=%.{domain}&output=json"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            for entry in data:
+                name = entry.get('name_value', '')
+                if name and name.endswith(f'.{domain}'):
+                    subdomains.add(name.lower())
+    except:
+        pass
+    return list(subdomains)[:50]
+
+def scan_port(ip, port, timeout=2):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((ip, port))
+        sock.close()
+        if result == 0:
+            services = {
+                21: 'FTP', 22: 'SSH', 23: 'Telnet', 25: 'SMTP', 53: 'DNS',
+                80: 'HTTP', 110: 'POP3', 143: 'IMAP', 443: 'HTTPS', 445: 'SMB',
+                465: 'SMTPS', 587: 'SMTP', 993: 'IMAPS', 995: 'POP3S',
+                1433: 'MSSQL', 3306: 'MySQL', 3389: 'RDP', 5432: 'PostgreSQL',
+                6379: 'Redis', 8080: 'HTTP-Alt', 8443: 'HTTPS-Alt', 8888: 'HTTP-Alt'
+            }
+            return {'port': port, 'service': services.get(port, f'Port-{port}'), 'status': 'open'}
+    except:
+        pass
+    return None
+
+def scan_ports(ip):
+    ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 465, 587, 993, 995,
+             1433, 3306, 3389, 5432, 6379, 8080, 8443, 8888]
+    results = []
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        futures = {executor.submit(scan_port, ip, port): port for port in ports}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                results.append(result)
+    return results
+
+def analyze_ssl(ip, port=443):
+    try:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        with socket.create_connection((ip, port), timeout=5) as sock:
+            with context.wrap_socket(sock, server_hostname=ip) as ssock:
+                cert = ssock.getpeercert()
+                if cert:
+                    subject = dict(x[0] for x in cert.get('subject', []))
+                    issuer = dict(x[0] for x in cert.get('issuer', []))
+                    sans = [alt[1] for alt in cert.get('subjectAltName', []) if alt[0] == 'DNS']
+                    return {
+                        'subject': subject.get('commonName', 'N/A'),
+                        'issuer': issuer.get('commonName', 'N/A'),
+                        'notAfter': cert.get('notAfter', 'N/A'),
+                        'san_count': len(sans),
+                        'sans': sans[:10]
+                    }
+    except:
+        pass
+    return None
+
+def generate_sni_recommendations(domain, subdomains, ssl_info):
+    recommendations = []
+    seen = set()
+
+    # النطاق الأساسي
+    recommendations.append({'domain': domain, 'type': 'النطاق الأساسي'})
+    seen.add(domain)
+
+    # النطاقات الفرعية
+    for sub in subdomains:
+        if sub not in seen:
+            recommendations.append({'domain': sub, 'type': 'نطاق فرعي'})
+            seen.add(sub)
+
+    # النطاقات من الشهادة
+    if ssl_info and 'sans' in ssl_info:
+        for san in ssl_info['sans']:
+            if san not in seen and san.endswith(domain):
+                recommendations.append({'domain': san, 'type': 'نطاق بديل (SSL)'})
+                seen.add(san)
+
+    return recommendations[:20]
+
+# ============================================
+# Routes
+# ============================================
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/scan', methods=['POST'])
+def scan():
+    data = request.get_json()
+    target = data.get('target', '').strip()
+    if not target:
+        return jsonify({'error': 'الرجاء إدخال نطاق أو IP'})
+
+    try:
+        # حل النطاق
+        ip = resolve_domain(target)
+        if not ip:
+            # محاولة كـ IP مباشر
+            try:
+                socket.inet_aton(target)
+                ip = target
+            except:
+                return jsonify({'error': 'فشل في حل النطاق أو IP غير صالح'})
+
+        # معلومات IP
+        ip_info = get_ip_info(ip)
+
+        # النطاقات الفرعية
+        subdomains = find_subdomains(target)
+
+        # فحص المنافذ
+        open_ports = scan_ports(ip)
+
+        # SSL
+        ssl_info = None
+        if any(p['port'] == 443 for p in open_ports):
+            ssl_info = analyze_ssl(ip)
+
+        # توصيات SNI
+        sni_recommendations = generate_sni_recommendations(target, subdomains, ssl_info)
+
+        result = {
+            'target': target,
+            'main_ip': ip,
+            'org': ip_info.get('org', 'غير معروف'),
+            'location': f"{ip_info.get('city', 'غير معروف')}, {ip_info.get('country', 'غير معروف')}",
+            'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'subdomains_count': len(subdomains),
+            'open_ports_count': len(open_ports),
+            'sni_count': len(sni_recommendations),
+            'subdomains': subdomains,
+            'open_ports': open_ports,
+            'ssl_info': ssl_info,
+            'sni_recommendations': sni_recommendations
+        }
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+# ============================================
+# التشغيل
+# ============================================
 
 if __name__ == '__main__':
-    start()
+    print("""
+    ╔═══════════════════════════════════════════╗
+    ║   🌐 Network Scanner & SNI Analyzer      ║
+    ║   تشغيل السيرفر على: http://0.0.0.0:5000 ║
+    ╚═══════════════════════════════════════════╝
+    """)
+    app.run(host='0.0.0.0', port=5000, debug=False)
