@@ -1,7 +1,3 @@
-# requirements.txt
-# Python built-in modules only:
-# - socket
-# - webbrowser  
-# - http.server
-# - os
-# No pip install required
+Flask==3.0.3
+requests==2.32.3
+dnspython==2.7.0
