@@ -1,15 +1,18 @@
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import socket
+import platform
+import time
 
 # ============================================
-# 📄 صفحة HTML - رسالة إيقاف الموقع
+# 📄 صفحة تعليمية تعرض معلومات الجهاز
 # ============================================
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ar">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🚫 الموقع متوقف</title>
+    <title>📊 معلومات الجهاز - تعليمي</title>
     <style>
         * {
             margin: 0;
@@ -36,8 +39,7 @@ HTML_PAGE = """<!DOCTYPE html>
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 30px;
-            padding: 45px 35px;
-            text-align: center;
+            padding: 35px 30px;
             box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
             animation: fadeIn 0.8s ease-out;
         }
@@ -47,199 +49,176 @@ HTML_PAGE = """<!DOCTYPE html>
             to { opacity: 1; transform: translateY(0); }
         }
 
-        .icon {
-            font-size: 70px;
-            margin-bottom: 15px;
-            display: block;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
-        }
-
-        h1 {
-            color: #ff6b6b;
-            font-size: 28px;
-            font-weight: 800;
-            margin-bottom: 12px;
-            letter-spacing: 1px;
-        }
-
-        .subtitle {
-            color: #ffd93d;
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 20px;
-            background: rgba(255, 217, 61, 0.1);
-            padding: 8px 20px;
-            border-radius: 50px;
-            display: inline-block;
-        }
-
-        .divider {
-            height: 2px;
-            background: linear-gradient(90deg, transparent, rgba(255, 107, 107, 0.5), transparent);
-            margin: 20px 0 25px 0;
-        }
-
-        .message-box {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            padding: 20px;
+        .header {
+            text-align: center;
             margin-bottom: 25px;
-            border-right: 4px solid #ff6b6b;
-            text-align: right;
         }
 
-        .message-box p {
-            color: #e0e0e0;
-            font-size: 15px;
-            line-height: 1.8;
+        .header .icon {
+            font-size: 50px;
+            display: block;
             margin-bottom: 10px;
         }
 
-        .message-box p:last-child {
-            margin-bottom: 0;
-        }
-
-        .message-box .highlight {
-            color: #ff6b6b;
-            font-weight: 700;
-        }
-
-        .warning-badge {
-            display: inline-block;
-            background: rgba(255, 107, 107, 0.15);
-            color: #ff6b6b;
-            padding: 6px 16px;
-            border-radius: 50px;
-            font-size: 13px;
-            font-weight: 600;
-            margin-bottom: 15px;
-            border: 1px solid rgba(255, 107, 107, 0.3);
-        }
-
-        .btn-exit {
-            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+        .header h1 {
             color: #fff;
-            border: none;
-            padding: 16px 40px;
+            font-size: 24px;
+            font-weight: 800;
+        }
+
+        .header .sub {
+            color: rgba(255,255,255,0.5);
+            font-size: 13px;
+            margin-top: 5px;
+        }
+
+        .info-box {
+            background: rgba(255, 255, 255, 0.05);
             border-radius: 16px;
-            font-size: 18px;
-            font-weight: 700;
-            cursor: pointer;
-            width: 100%;
-            transition: all 0.3s ease;
-            box-shadow: 0 10px 30px rgba(255, 107, 107, 0.3);
+            padding: 18px;
+            margin-bottom: 12px;
+            border-right: 3px solid #667eea;
+            transition: 0.3s;
+        }
+
+        .info-box:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .info-box .label {
+            color: rgba(255,255,255,0.4);
+            font-size: 11px;
+            text-transform: uppercase;
             letter-spacing: 1px;
+            font-weight: 600;
         }
 
-        .btn-exit:hover {
-            transform: translateY(-3px) scale(1.02);
-            box-shadow: 0 15px 40px rgba(255, 107, 107, 0.5);
+        .info-box .value {
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 4px;
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+            direction: ltr;
+            text-align: left;
         }
 
-        .btn-exit:active {
-            transform: scale(0.97);
+        .info-box .value.ar {
+            direction: rtl;
+            text-align: right;
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(102, 126, 234, 0.2);
+            color: #667eea;
+            padding: 4px 12px;
+            border-radius: 50px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-top: 5px;
+            border: 1px solid rgba(102, 126, 234, 0.2);
+        }
+
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            margin: 20px 0;
         }
 
         .footer {
+            text-align: center;
             margin-top: 20px;
+        }
+
+        .footer p {
+            color: rgba(255,255,255,0.3);
             font-size: 12px;
-            color: rgba(255, 255, 255, 0.3);
-            letter-spacing: 0.5px;
+            line-height: 1.8;
         }
 
-        .footer span {
-            color: rgba(255, 107, 107, 0.5);
+        .footer .highlight {
+            color: #ff6b6b;
         }
 
-        /* توهج خلفي */
-        .glow {
-            position: fixed;
-            width: 300px;
-            height: 300px;
-            background: radial-gradient(circle, rgba(255, 107, 107, 0.1), transparent 70%);
-            border-radius: 50%;
-            top: -100px;
-            right: -100px;
-            z-index: -1;
+        .btn-refresh {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: #fff;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s;
+            margin-top: 15px;
         }
 
-        .glow2 {
-            position: fixed;
-            width: 400px;
-            height: 400px;
-            background: radial-gradient(circle, rgba(255, 217, 61, 0.05), transparent 70%);
-            border-radius: 50%;
-            bottom: -150px;
-            left: -150px;
-            z-index: -1;
+        .btn-refresh:hover {
+            transform: scale(1.02);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
         }
     </style>
 </head>
 <body>
 
-    <!-- توهجات خلفية -->
-    <div class="glow"></div>
-    <div class="glow2"></div>
-
     <div class="container">
-        <span class="icon">🚫</span>
-        <h1>تم إيقاف الموقع</h1>
-        <div class="subtitle">⛔ لأسباب أمنية</div>
+        <div class="header">
+            <span class="icon">🖥️</span>
+            <h1>معلومات جهازك</h1>
+            <div class="sub">للأغراض التعليمية فقط - أنت ترى معلوماتك أنت</div>
+        </div>
+
+        <div id="infoContainer">
+            <!-- يتم تعبئتها بواسطة JavaScript -->
+        </div>
 
         <div class="divider"></div>
 
-        <div class="warning-badge">🔒 إشعار أمني</div>
-
-        <div class="message-box">
-            <p>
-                <span class="highlight">•</span> تم <span class="highlight">إيقاف</span> هذا الموقع بشكل <span class="highlight">فوري</span> 
-                بسبب نشاط مشبوه.
-            </p>
-            <p>
-                <span class="highlight">•</span> هذا الموقع لأغراض <span class="highlight">تعليمية</span> فقط، 
-                ولا نتحمل أي <span class="highlight">مسؤولية</span> عن أي استخدام آخر.
-            </p>
-            <p>
-                <span class="highlight">•</span> للاستفسارات، يرجى التواصل مع إدارة الموقع.
-            </p>
-        </div>
-
-        <button class="btn-exit" onclick="exitPage()">
-            🚪 الخروج الآن
-        </button>
+        <button class="btn-refresh" onclick="loadInfo()">🔄 تحديث المعلومات</button>
 
         <div class="footer">
-            <span>⚠️</span> هذا الموقع غير متاح حالياً <span>⚠️</span>
+            <p>
+                <span class="highlight">⚠️</span> هذه المعلومات خاصة بجهازك فقط<br>
+                لأغراض <span class="highlight">تعليمية</span> لفهم بيانات الجهاز
+            </p>
         </div>
     </div>
 
     <script>
-        function exitPage() {
-            // محاولة إغلاق الصفحة بعدة طرق
-            window.close();
+        function loadInfo() {
+            const container = document.getElementById('infoContainer');
             
-            // محاولة توجيه إلى صفحة فارغة
-            document.body.innerHTML = '';
-            window.location.href = 'about:blank';
-            
-            // محاولة إعادة التوجيه لصفحة لا شيء
-            setTimeout(function() {
-                window.location.href = 'data:text/html,<h1>تم الخروج</h1>';
-            }, 100);
+            const info = {
+                '🌐 عنوان IP': 'تحتاج إلى سيرفر لجلب IP',
+                '🖥️ نظام التشغيل': navigator.platform || 'غير معروف',
+                '🌍 المتصفح': navigator.userAgent || 'غير معروف',
+                '📱 نوع الجهاز': /Mobile/.test(navigator.userAgent) ? 'جوال' : 'كمبيوتر',
+                '🔤 اللغة': navigator.language || 'غير معروف',
+                '📐 دقة الشاشة': window.screen.width + 'x' + window.screen.height,
+                '🕐 الوقت الحالي': new Date().toLocaleString('ar-SA'),
+                '🔗 البروتوكول': window.location.protocol,
+            };
+
+            let html = '';
+            for (const [label, value] of Object.entries(info)) {
+                html += `
+                    <div class="info-box">
+                        <div class="label">${label}</div>
+                        <div class="value">${value}</div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
         }
 
-        // منع النقر بزر اليمين
-        document.addEventListener('contextmenu', function(e) {
-            e.preventDefault();
-        });
+        // تحميل عند فتح الصفحة
+        loadInfo();
 
-        // منع F12 و Ctrl+Shift+I و Ctrl+U
+        // منع بعض الاختصارات
         document.addEventListener('keydown', function(e) {
             if (e.key === 'F12' || 
                 (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J')) ||
@@ -261,8 +240,6 @@ class MyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-        self.send_header('Pragma', 'no-cache')
-        self.send_header('Expires', '0')
         self.end_headers()
         self.wfile.write(HTML_PAGE.encode('utf-8'))
     
@@ -274,8 +251,8 @@ def start():
     server = HTTPServer(('0.0.0.0', port), MyHandler)
     
     print('\n' + '='*60)
-    print('🚫 الموقع متوقف لأسباب أمنية')
-    print('📌 يعرض رسالة احترافية مع زر خروج')
+    print('📊 موقع عرض معلومات الجهاز - تعليمي')
+    print('🔒 يعرض فقط معلومات جهاز المستخدم نفسه')
     print('🛑 Press Ctrl+C to stop')
     print('='*60 + '\n')
     
